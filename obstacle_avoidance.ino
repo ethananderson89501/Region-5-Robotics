@@ -72,6 +72,8 @@ double watch(){
   delayMicroseconds(10); // give or take 7 feet
   digitalWrite(TRIG,LOW);
   long echo_time=pulseIn(ECHO,HIGH);
+  Serial.print("Echo time: ");
+  Serial.println(echo_time);
   double echo_distance=echo_time / 148.0; //how far away is the object in inches
   return echo_distance;
 }
@@ -87,7 +89,7 @@ double * scan_range(double theta_0, double theta_1, int divisions){
     Serial.println(dist);
     delay(500);
     dists[i] = dist;
-    // Serial.println(angle);
+    //Serial.println(angle);
   }
   return dists;
 }
@@ -115,10 +117,10 @@ void setup() {
   
   digitalWrite(TRIG, LOW);
   
-  head.attach(SERVO_PIN); // THIS LINE BREAKS IN3
-  
+  head.attach(SERVO_PIN);
   head.write(90);
   delay(2000);
+  
   Serial.begin(9600);
   
   stop();
@@ -153,7 +155,6 @@ void loop() {
   }else{
     turnRight();
   }
-  // go_Advance();
   delay(2000);
   stop();
   /*
