@@ -15,7 +15,7 @@
 #define IN4 11 
 #define ENB 12
 
-int divisions = 3;
+int divisions = 6;
 
 Servo head;
 
@@ -48,21 +48,21 @@ void reverse(){
 }
 
 void turnLeft(){
-  duty_cycleA = 128;
-  duty_cycleB = 192;
-  analogWrite(IN1, duty_cycleA);
-  analogWrite(IN2, 0);
-  analogWrite(IN3, duty_cycleB);
-  analogWrite(IN4, 0);
-}
-
-void turnRight(){
   duty_cycleA = 192;
   duty_cycleB = 128;
   analogWrite(IN1, 0);
   analogWrite(IN2, duty_cycleA);
   analogWrite(IN3, 0);
   analogWrite(IN4, duty_cycleB);
+}
+
+void turnRight(){
+  duty_cycleA = 128;
+  duty_cycleB = 192;
+  analogWrite(IN1, duty_cycleA);
+  analogWrite(IN2, 0);
+  analogWrite(IN3, duty_cycleB);
+  analogWrite(IN4, 0);
 }
 
 double watch(){
@@ -84,10 +84,11 @@ double * scan_range(double theta_0, double theta_1, int divisions){
   for (int i = 0; i <= divisions; i++){
     double angle = theta_0 + i * delta; // 2 * theta_1 since divisions is 2 * on second pass
     head.write(angle);
-    delay(500); // wait to get there
+    if (i == 0) delay(300); // wait to get there
+    else delay(30);
     double dist = watch();
     Serial.println(dist);
-    delay(500);
+    delay(30);
     dists[i] = dist;
     //Serial.println(angle);
   }
@@ -127,9 +128,7 @@ void setup() {
 }
 
 void loop() {
-  
-  int divisions = 2;
-  double * dists = scan_range(45, 135, divisions);
+  double * dists = scan_range(0, 180, divisions);
   double length = divisions * 2 + 1;
   double left_sum = 0;
   double right_sum = 0;
@@ -147,16 +146,19 @@ void loop() {
       left_sum += dists[i];
     }
   }
+  double left_average = left_sum / (divisions / 2);
   Serial.println("]");
-  if (straight >= 10){
+  if (straight >= 10 && left_average < 15){
     forward();
-  }else if (left_sum > right_sum){
+  }else if (left_average >= 15){
     turnLeft();
+    Serial.print("Turning left");
   }else{
     turnRight();
+    Serial.print("Turning right");
   }
-  delay(2000);
-  stop();
+  //delay(200);
+  //stop();
   /*
   forward();
   delay(1000);
