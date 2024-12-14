@@ -28,6 +28,9 @@ int duty_cycleA;
 int duty_cycleB;
 
 int state;
+int backingOut;
+
+int direction;
 
 void goForward(){
   state = forward;
@@ -98,20 +101,22 @@ double watch(){
 }
 
 double dists[divisions + 1];
-void scan_range(double theta_0, double theta_1, int divisions){
+void scan_range(double theta_0, double theta_1, int divisions, int directions){
   double delta = (theta_1 - theta_0) / divisions;
   for (int i = 0; i <= divisions; i++){
     double angle = theta_0 + i * delta; // 2 * theta_1 since divisions is 2 * on second pass
-    head.write(angle);
-    if (i == 0) delay(300); // wait to get there
-    else delay(20);
+    if (direction == 1) head.write(angle);
+    else head.write(theta_1 - angle);
+    delay(30);
     double dist = watch();
     if (dist < 0) dist = 0; // Filters out invalid values
-    Serial.println(dist);
-    delay(20);
-    dists[i] = dist;
+    //Serial.println(dist);
+    if (direction == 1) dists[i] = dist;
+    else dists[divisions - i] = dist;
     //Serial.println(angle);
   }
+  if (direction == 0) direction = 1;
+  else direction = 0;
 }
 
 double getMin(double* array, int size) {
@@ -146,79 +151,93 @@ void setup() {
   digitalWrite(TRIG, LOW);
   
   head.attach(SERVO_PIN);
-  head.write(90);
+  head.write(180); //Start in left position
   delay(200);
   
   Serial.begin(9600);
+
+  backingOut = 0;
+  direction = 0; // Start going from left to right
   
   stop();
   delay(200);
   goForward();
 }
 
+double center_array[divisions / 3];
+double left_array[divisions / 3];
+double right_array[divisions / 3];
+double center_min;
+double right_min;
+double left_min;
+
 void loop() {
-  scan_range(0, 180, divisions);
-  double length = divisions * 2 + 1;
-  double left_sum = 0;
-  double right_sum = 0;
-  double straight;
+  scan_range(0, 180, divisions, direction);
+  /*
   Serial.print("[");
   for (int i = 0; i <= divisions; i++){
     Serial.print(dists[i]);
     Serial.print(", ");
-    if (divisions % 2 == 0 && i == divisions / 2){
-      straight = dists[i];
-    }else if ( i <= divisions / 2
-    ){
-      right_sum += dists[i];
-    }else{
-      left_sum += dists[i];
-    }
   }
   Serial.println("]");
-
+*/
   // Find minimum value in the center
-  double * center_array = new double(divisions / 3);
-  Serial.print("Center array: [");
+  //Serial.print("Center array: [");
   for (int i = 0; i <= divisions / 3; i++){
     center_array[i] = dists[i + divisions / 3 + 1];
-    Serial.print(center_array[i]);
-    Serial.print(", ");
+    //Serial.print(center_array[i]);
+    //Serial.print(", ");
   }
-  Serial.println("]");
-  double center_min = getMin(center_array, divisions / 3 + 1);
-  Serial.print("Center minimum: ");
-  Serial.println(center_min);
+  //Serial.println("]");
+  center_min = getMin(center_array, divisions / 3 + 1);
+  //Serial.print("Center minimum: ");
+  //Serial.println(center_min);
 
   // Find minimum value on the left side
-  double * left_array = new double(divisions / 3);
-  Serial.print("Left array: [");
+  //Serial.print("Left array: [");
   for (int i = 0; i <= divisions / 3; i++){
     left_array[i] = dists[i + divisions *2/3 + 1];
-    Serial.print(left_array[i]);
-    Serial.print(", ");
+    //Serial.print(left_array[i]);
+    //Serial.print(", ");
   }
-  Serial.println("]");
-  double left_min = getMin(left_array, divisions / 3 + 1);
-  Serial.print("Left minimum: ");
-  Serial.println(left_min);
+  //Serial.println("]");
+  left_min = getMin(left_array, divisions / 3 + 1);
+  //Serial.print("Left minimum: ");
+  //Serial.println(left_min);
+
+  // Find minimum value on the right side
+  //Serial.print("Right array: [");
+  for (int i = 0; i <= divisions / 3; i++){
+    right_array[i] = dists[i];
+    //Serial.print(right_array[i]);
+    //Serial.print(", ");
+  }
+  //Serial.println("]");
+  right_min = getMin(right_array, divisions / 3 + 1);
+  //Serial.print("Right minimum: ");
+  //Serial.println(right_min);
 
   // Logic to hug the left wall
-  Serial.println(state);
+  //Serial.println(backingOut);
   if (state == forward){
-    if (center_min >= 10 && left_min < 12 && left_min > 6){
-      goForward();
-    }else if (left_min >= 12){
-      turnLeft();
-    }else{
-      turnRight();
-    }
+      if (center_min >= 10 && left_min < 12 && left_min > 6){
+        goForward();
+      }else if (left_min >= 12){
+        turnLeft();
+      }else if (right_min >= 12){
+        turnRight();
+      }
+      else{
+        backingOut = 1;
+        goReverse();
+        Serial.println("Backing out");
+      }
   }
   else if (state == right){
     if (center_min < 10){
       turnRight();
     }
-    else{ goForward();}
+    else {goForward();}
   }
   else if (state == left){
     if (left_min >= 12){
@@ -226,4 +245,10 @@ void loop() {
     }
     else{ goForward();}
   }
+  
+  else if (state == reverse){
+    if (right_min >= 8) turnRight();
+    else goReverse();
+  }
+  
 }
