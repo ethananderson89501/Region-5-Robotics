@@ -14,11 +14,13 @@
 #define IN4 11 
 #define ENB 12
 
-#define stopped 0
-#define forward 1
-#define left 2
-#define right 3
-#define reverse 4
+#define color_pin 2
+
+#define stopped 13
+#define forward 14
+#define left 15
+#define right 16
+#define reverse 17
 
 const int divisions = 8;
 
@@ -94,11 +96,13 @@ double watch(){
   if (echo_time <= 0) {
     return -1.0; // Return a special value to indicate no echo detected
   }
-  //Serial.print("Echo time: ");
-  //Serial.println(echo_time);
   double echo_distance=echo_time / 148.0; //how far away is the object in inches
   return echo_distance;
 }
+
+int freq = 0;
+int next_freq = 0;
+int bands = 0;
 
 double dists[divisions + 1];
 void scan_range(double theta_0, double theta_1, int divisions, int directions){
@@ -110,10 +114,13 @@ void scan_range(double theta_0, double theta_1, int divisions, int directions){
     delay(30);
     double dist = watch();
     if (dist < 0) dist = 0; // Filters out invalid values
-    //Serial.println(dist);
     if (direction == 1) dists[i] = dist;
     else dists[divisions - i] = dist;
-    //Serial.println(angle);
+
+    // Color sensing included inside loop for faster iterations
+    int next_freq = pulseIn(color_pin, LOW);
+    if (freq > 0 && (next_freq < freq - 30 || next_freq > freq + 30)) bands = bands + 1;
+    freq = next_freq;
   }
   if (direction == 0) direction = 1;
   else direction = 0;
@@ -173,52 +180,25 @@ double left_min;
 
 void loop() {
   scan_range(0, 180, divisions, direction);
-  /*
-  Serial.print("[");
-  for (int i = 0; i <= divisions; i++){
-    Serial.print(dists[i]);
-    Serial.print(", ");
-  }
-  Serial.println("]");
-*/
   // Find minimum value in the center
-  //Serial.print("Center array: [");
   for (int i = 0; i <= divisions / 3; i++){
     center_array[i] = dists[i + divisions / 3 + 1];
-    //Serial.print(center_array[i]);
-    //Serial.print(", ");
   }
-  //Serial.println("]");
   center_min = getMin(center_array, divisions / 3 + 1);
-  //Serial.print("Center minimum: ");
-  //Serial.println(center_min);
 
   // Find minimum value on the left side
-  //Serial.print("Left array: [");
   for (int i = 0; i <= divisions / 3; i++){
     left_array[i] = dists[i + divisions *2/3 + 1];
-    //Serial.print(left_array[i]);
-    //Serial.print(", ");
   }
-  //Serial.println("]");
   left_min = getMin(left_array, divisions / 3 + 1);
-  //Serial.print("Left minimum: ");
-  //Serial.println(left_min);
 
   // Find minimum value on the right side
-  //Serial.print("Right array: [");
   for (int i = 0; i <= divisions / 3; i++){
     right_array[i] = dists[i];
-    //Serial.print(right_array[i]);
-    //Serial.print(", ");
   }
-  //Serial.println("]");
   right_min = getMin(right_array, divisions / 3 + 1);
-  //Serial.print("Right minimum: ");
-  //Serial.println(right_min);
 
   // Logic to hug the left wall
-  //Serial.println(backingOut);
   if (state == forward){
       if (center_min >= 10 && left_min < 12 && left_min > 6){
         goForward();
@@ -256,4 +236,7 @@ void loop() {
   double temp = val / 1024.0 * 5 * 100; // temperature in degrees C
   Serial.println(temp);
   if (temp > 35) stop();
+
+  //Stop if color changed twice
+  if (bands > 1) stop();
 }
