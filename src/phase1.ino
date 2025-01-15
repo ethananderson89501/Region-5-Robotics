@@ -14,8 +14,6 @@
 #define IN4 11 
 #define ENB 12
 
-#define color_pin 2
-
 #define stopped 13
 #define forward 14
 #define left 15
@@ -100,10 +98,6 @@ double watch(){
   return echo_distance;
 }
 
-int freq = 0;
-int next_freq = 0;
-int bands = 0;
-
 double dists[divisions + 1];
 void scan_range(double theta_0, double theta_1, int divisions, int directions){
   double delta = (theta_1 - theta_0) / divisions;
@@ -116,11 +110,6 @@ void scan_range(double theta_0, double theta_1, int divisions, int directions){
     if (dist < 0) dist = 0; // Filters out invalid values
     if (direction == 1) dists[i] = dist;
     else dists[divisions - i] = dist;
-
-    // Color sensing included inside loop for faster iterations
-    int next_freq = pulseIn(color_pin, LOW);
-    if (freq > 0 && (next_freq < freq - 30 || next_freq > freq + 30)) bands = bands + 1;
-    freq = next_freq;
   }
   if (direction == 0) direction = 1;
   else direction = 0;
@@ -142,6 +131,7 @@ void setup() {
   pinMode(ENB, OUTPUT);
   pinMode(IN3, OUTPUT);
   pinMode(IN4, OUTPUT);
+  pinMode(13, OUTPUT);
 
 
   // Initialize motor state (motor off)
@@ -200,11 +190,19 @@ void loop() {
 
   // Logic to hug the left wall
   if (state == forward){
-      if (center_min >= 10 && left_min < 12 && left_min > 6){
+      if (center_min >= 7 && left_min < 10 && left_min > 4 && right_min > 4){
         goForward();
-      }else if (left_min >= 12){
+      }else if (left_min >= 10 && right_min > 4){
         turnLeft();
-      }else if (right_min >= 12){
+      }
+      /*
+      else if (backingOut && center_min >= 7) goForward();
+      else if (backingOut && left_min < 10){
+        backingOut = 0;
+        goForward();
+      }
+      */
+      else if (right_min >= 7 & left_min > 4){
         turnRight();
       }
       else{
@@ -214,20 +212,27 @@ void loop() {
       }
   }
   else if (state == right){
-    if (center_min < 10){
+    if (center_min < 7){
       turnRight();
     }
-    else {goForward();}
+    else if (backingOut && right_min >= 12) turnRight();
+    else {
+      goForward();
+      backingOut = 0;
+    }
   }
   else if (state == left){
-    if (left_min >= 12){
+    if (left_min >= 10){
       turnLeft();
     }
     else{ goForward();}
   }
   
   else if (state == reverse){
-    if (right_min >= 8) turnRight();
+    if (right_min >= 8){
+      turnRight();
+      backingOut = 1;
+    }
     else goReverse();
   }
   
@@ -235,8 +240,7 @@ void loop() {
   int val = analogRead(A0);
   double temp = val / 1024.0 * 5 * 100; // temperature in degrees C
   Serial.println(temp);
-  if (temp > 35) stop();
+  //if (temp > 26) stop();
 
-  //Stop if color changed twice
-  if (bands > 1) stop();
+  digitalWrite(13, backingOut);
 }
