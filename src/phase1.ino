@@ -215,7 +215,7 @@ void loop() {
     if (center_min < 7){
       turnRight();
     }
-    else if (backingOut && right_min >= 12) turnRight();
+    else if (backingOut && right_min >= 12 && center_min < 10) turnRight();
     else {
       goForward();
       backingOut = 0;
