@@ -1,84 +1,89 @@
 
 #include "ICM_20948.h" // Click here to get the library: http://librarymanager/All#SparkFun_ICM_20948_IMU
+#include <Adafruit_AHRS.h>      // Sensor fusion
 
-#define SERIAL_PORT Serial
+ICM_20948_I2C myIMU;
+Adafruit_Madgwick filter;
 
-#define WIRE_PORT Wire // Your desired Wire port.
-// The value of the last bit of the I2C address.
-// On the SparkFun 9DoF IMU breakout the default is 1, and when the ADR jumper is closed the value becomes 0
-#define AD0_VAL 1
+float vx = 0, vy = 0;
+float px = 0, py = 0;
+unsigned long lastTime = 0;
 
-ICM_20948_I2C myICM; //create an ICM_20948_I2C object
+void setup() {
+  Serial.begin(9600);
+  while (!Serial);
 
-unsigned long start_time;
-unsigned long current_time;
-unsigned long elapsed_time;
-double position[2] = {0, 0};
-double velocity[2] = {0, 0};
-double acceleration[2] = {0, 0};
-
-void setup()
-{
-
-  SERIAL_PORT.begin(115200);
-  while (!SERIAL_PORT)
-  {
-  };
-
-  WIRE_PORT.begin();
-  WIRE_PORT.setClock(400000);
-
-  //myICM.enableDebugging(); // Uncomment this line to enable helpful debug messages on Serial
-
-  bool initialized = false;
-  while (!initialized)
-  {
-
-
-    myICM.begin(WIRE_PORT, AD0_VAL);
-
-
-    SERIAL_PORT.print(F("Initialization of the sensor returned: "));
-    SERIAL_PORT.println(myICM.statusString());
-    if (myICM.status != ICM_20948_Stat_Ok)
-    {
-      SERIAL_PORT.println("Trying again...");
-      delay(500);
-    }
-    else
-    {
-      initialized = true;
-    }
+  Wire.begin();
+  if (myIMU.begin() != ICM_20948_Stat_Ok) {
+    Serial.println("IMU not detected!");
+    while (1);
   }
-  start_time = micros();
+
+  filter.begin(100.0);  // 100Hz sample rate
 }
 
-void loop()
-{
+void loop() {
+  unsigned long currentTime = millis();
+  float dt = (currentTime - lastTime) / 1000.0;
+  lastTime = currentTime;
 
-  if (myICM.dataReady())
-  {
-    myICM.getAGMT();         // The values are only updated when you call 'getAGMT'
-                             //    printRawAGMT( myICM.agmt );     // Uncomment this to see the raw values, taken directly from the agmt structure
-    //printScaledAGMT(&myICM); // This function takes into account the scale settings from when the measurement was made to calculate the values with units
-    delay(300);
-  }
-  else
-  {
-    SERIAL_PORT.println("Waiting for data");
-    delay(500);
-  }
+  myIMU.getAGMT();  // Read accel, gyro, mag data
 
-  current_time = micros();
-  elapsed_time = current_time - start_time;
-  start_time = current_time;
+  // Get raw sensor data
+  float ax = myIMU.accX() / 1000 * 9.81 + 0.0927; //Adjusting for empirically derived offset value
+  float ay = myIMU.accY() / 1000 * 9.81 - 0.2315;
+  float az = myIMU.accZ() / 1000 * 9.81 - 0.3534;
+  float gx = myIMU.gyrX() * 3.1415926 / 180 + .0055;
+  float gy = myIMU.gyrY() * 3.1415926 / 180 - .00084;
+  float gz = myIMU.gyrZ() * 3.1415926 / 180 - .0045;
+  float mx = myIMU.magX();
+  float my = myIMU.magY();
+  float mz = myIMU.magZ();
 
-  acceleration[0] = myICM.accX();
-  acceleration[1] = myICM.accY();
+  // Update sensor fusion
+  filter.update(gx, gy, gz, ax, ay, az, mx, my, mz);
+  float roll = filter.getRoll();
+  float pitch = filter.getPitch();
+  float yaw = filter.getYaw();  // Rotation about Z-axis
 
-  position[0] = position[0] + velocity[0]*elapsed_time + acceleration[0]*elapsed_time*elapsed_time;
-  position[1] = position[1] + velocity[1]*elapsed_time + acceleration[1]*elapsed_time*elapsed_time;
+  // Gravity correction
+  /*
+  float g_x = 9.81 * sin(pitch * DEG_TO_RAD);
+  float g_y = -9.81 * sin(roll * DEG_TO_RAD) * cos(pitch * DEG_TO_RAD);
+  float g_z = 9.81 * cos(roll * DEG_TO_RAD) * cos(pitch * DEG_TO_RAD);
+  
+  ax -= g_x;
+  ay -= g_y;
+  az -= g_z;
+  */
+  // Transform acceleration to global frame using yaw
+  float a_X = ax * cos(yaw * DEG_TO_RAD) - ay * sin(yaw * DEG_TO_RAD);
+  float a_Y = ax * sin(yaw * DEG_TO_RAD) + ay * cos(yaw * DEG_TO_RAD);
 
-  velocity[0] = velocity[0] + acceleration[0]*elapsed_time;
-  velocity[1] = velocity[1] + acceleration[1]*elapsed_time;
+  // Integrate acceleration to velocity
+  vx += a_X * dt;
+  vy += a_Y * dt;
+
+  // Integrate velocity to position
+  px += vx * dt;
+  py += vy * dt;
+
+  // Print results
+  
+  Serial.print("X: "); Serial.print(px);
+  Serial.print(" Y: "); Serial.print(py);
+  Serial.print(" Yaw: "); Serial.print(yaw);
+  Serial.print(" Pitch: "); Serial.print(pitch);
+  Serial.print(" Roll: "); Serial.print(roll);
+  Serial.print(" Accel X: "); Serial.print(ax);
+  Serial.print(" Accel Y: "); Serial.print(ay);
+  Serial.print(" Accel Z: "); Serial.print(az);
+  Serial.print(" Gyro X: "); Serial.print(gx);
+  Serial.print(" Gyro Y: "); Serial.print(gy);
+  Serial.print(" Gyro Z: "); Serial.print(gz);
+  Serial.print(" Mag X: "); Serial.print(mx);
+  Serial.print(" Mag Y: "); Serial.print(my);
+  Serial.print(" Mag Z: "); Serial.println(mz);
+  
+  delay(10);
 }
