@@ -2,35 +2,72 @@
 #include <string.h>
 #include <Wire.h>
 
+//I/O pins
+#define encoderLA 3
+#define encoderLB 4
+#define encoderRA 12
+#define encoderRB 13
+
 #define SERVO_PIN 9
 
 #define ECHO 8
 #define TRIG 7
-
-#define ENA 4 
+ 
 #define IN1 5
 #define IN2 6 
 #define IN3 3 
 #define IN4 11 
-#define ENB 12
 
-#define stopped 13
-#define forward 14
-#define left 15
-#define right 16
-#define reverse 17
+//States
+#define stopped 14
+#define forward 15
+#define left 16
+#define right 17
+#define reverse 18
 
+// Servo iterations
 const int divisions = 8;
-
+// Servo direction
+int direction;
 Servo head;
 
+//Motor duty cycles
 int duty_cycleA;
 int duty_cycleB;
 
+//Motor states
 int state;
 int backingOut;
 
-int direction;
+//Navigation states
+int corner = 0;
+int corners_checked = 0;
+
+//Rotary encoder counter
+volatile int lcounter = 0;
+int laLastState;
+int lcurrent_counter;
+int llast_counter;
+int ltotal_counter;
+volatile int rcounter = 0;
+int raLastState;
+int rcurrent_counter;
+int rlast_counter;
+int rtotal_counter;
+
+//Odometry variables
+const double dia = 20.75; // Wheel diameter in inches  
+double Dl, Dr, Dc, Ori_ch;
+const int ER = 24; // Pulses per revolution
+double Ori  = 0; // Orientation in radians
+const double dist_const = dia * 3.1415926;
+double b = 20; // Wheelbase. Need to research/test this.
+
+// Distance from start position in inches
+double posX = 0;
+double posY = 0;
+
+double temp;
 
 void goForward(){
   state = forward;
@@ -99,7 +136,7 @@ double watch(){
 }
 
 double dists[divisions + 1];
-void scan_range(double theta_0, double theta_1, int divisions, int directions){
+void scan_range(double theta_0, double theta_1, int divisions){
   double delta = (theta_1 - theta_0) / divisions;
   for (int i = 0; i <= divisions; i++){
     double angle = theta_0 + i * delta; // 2 * theta_1 since divisions is 2 * on second pass
@@ -123,44 +160,6 @@ double getMin(double* array, int size) {
   return min;
 }
 
-void setup() {
-  // Set pin modes
-  pinMode(ENA, OUTPUT);
-  pinMode(IN1, OUTPUT);
-  pinMode(IN2, OUTPUT);
-  pinMode(ENB, OUTPUT);
-  pinMode(IN3, OUTPUT);
-  pinMode(IN4, OUTPUT);
-  pinMode(13, OUTPUT);
-
-
-  // Initialize motor state (motor off)
-  digitalWrite(ENA, HIGH);
-  analogWrite(IN1, 0);
-  analogWrite(IN2, 0);
-  digitalWrite(ENB, HIGH);
-  analogWrite(IN3, 0);
-  analogWrite(IN4, 0);
-  
-  pinMode(TRIG, OUTPUT);
-  pinMode(ECHO, INPUT);
-  
-  digitalWrite(TRIG, LOW);
-  
-  head.attach(SERVO_PIN);
-  head.write(180); //Start in left position
-  delay(200);
-  
-  Serial.begin(9600);
-
-  backingOut = 0;
-  direction = 0; // Start going from left to right
-  
-  stop();
-  delay(200);
-  goForward();
-}
-
 double center_array[divisions / 3];
 double left_array[divisions / 3];
 double right_array[divisions / 3];
@@ -168,8 +167,7 @@ double center_min;
 double right_min;
 double left_min;
 
-void loop() {
-  scan_range(0, 180, divisions, direction);
+void navigate(){
   // Find minimum value in the center
   for (int i = 0; i <= divisions / 3; i++){
     center_array[i] = dists[i + divisions / 3 + 1];
@@ -235,12 +233,114 @@ void loop() {
     }
     else goReverse();
   }
-  
-  //Temp sensing
-  int val = analogRead(A0);
-  double temp = val / 1024.0 * 5 * 100; // temperature in degrees C
-  Serial.println(temp);
-  //if (temp > 26) stop();
+}
 
-  digitalWrite(13, backingOut);
+void countL() {
+  int laState = digitalRead(encoderLA);
+  int lbState = digitalRead(encoderLB);
+
+  if (laState != laLastState) {  // Only process on change
+    if (lbState != laState) lcounter++;
+    else lcounter--;
+  }
+  laLastState = laState;
+}
+void countR() {
+  int raState = digitalRead(encoderRA);
+  int rbState = digitalRead(encoderRB);
+
+  if (raState != raLastState) {  // Only process on change
+    if (rbState != raState) rcounter++;
+    else rcounter--;
+  }
+  raLastState = raState;
+}
+
+void get_position(){
+  // Determine number of ticks for this iteration
+  noInterrupts();
+  ltotal_counter = lcounter;
+  rtotal_counter = rcounter;
+  interrupts();
+  lcurrent_counter = ltotal_counter - llast_counter;
+  llast_counter = ltotal_counter;
+  rcurrent_counter = rtotal_counter - rlast_counter;
+  rlast_counter = rtotal_counter;
+  
+  Dl = dist_const * lcurrent_counter; // Change in left distance
+  Dr = dist_const * rcurrent_counter; // Change in right distance 
+  Dc = (Dl + Dr) / 2 ; // Displacement
+  Ori_ch = (Dr - Dl) / b; // Change in orientation
+  Ori = Ori + Ori_ch; // New orientation
+  posX = posX + Dc * cos(Ori); 
+  posY = posY + Dc * sin(Ori);
+}
+
+void setup() {
+  // Set pin modes
+  pinMode(IN1, OUTPUT);
+  pinMode(IN2, OUTPUT);
+  pinMode(IN3, OUTPUT);
+  pinMode(IN4, OUTPUT);
+  pinMode(encoderLA, INPUT_PULLUP);
+  pinMode(encoderLB, INPUT_PULLUP);
+  pinMode(encoderRA, INPUT_PULLUP);
+  pinMode(encoderRB, INPUT_PULLUP);
+  pinMode(TRIG, OUTPUT);
+  pinMode(ECHO, INPUT);
+
+  // Initialize motor state (motor off)
+  analogWrite(IN1, 0);
+  analogWrite(IN2, 0);
+  analogWrite(IN3, 0);
+  analogWrite(IN4, 0);
+
+  // Initialize ultrasonic state
+  digitalWrite(TRIG, LOW);
+  
+  // Initialize servo
+  head.attach(SERVO_PIN);
+  head.write(180); //Start in left position
+  delay(200);
+
+  // Initialize encoder interrupts
+  laLastState = digitalRead(encoderLA);
+  llast_counter = 0;
+  attachInterrupt(digitalPinToInterrupt(encoderLA), countL, CHANGE);
+  raLastState = digitalRead(encoderRA);
+  rlast_counter = 0;
+  attachInterrupt(digitalPinToInterrupt(encoderRA), countR, CHANGE);
+  
+  Serial.begin(9600);
+
+  backingOut = 0;
+  direction = 0; // Start going from left to right
+  
+  stop();
+  delay(200);
+  goForward();
+}
+
+void loop() {
+  //Temp sensing
+  temp = analogRead(A0) / 1024.0 * 5 * 100; // temperature in degrees C
+  
+  // Calculate our position
+  get_position();
+
+  // Check to see if we've found the next corner
+  if (!corner){
+    if (corners_checked == 0){ // Target: 1ft, 7ft
+      if (posY > 6*12) corner = 1; //If we've gone forward 6 ft, find the corner
+    }
+    if (corners_checked == 1){ //Target: 7ft, 7ft
+      if (posX > 6*12) corner = 1; //If we've traveled to the first corner, and then right 6 ft, find the corner
+    }
+    if (corners_checked == 2){ //Target: 7ft, 1ft
+      if (posY < 1*12) corner = 1; //If we're within 1 ft of our original y position, find the corner
+    }
+  }
+
+  scan_range(0, 180, divisions); // This is where the most time is spent
+  if (!corner) navigate(); //Hug the left wall
 }
