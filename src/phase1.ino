@@ -1,6 +1,4 @@
 #include <Servo.h>
-#include <string.h>
-#include <Wire.h>
 
 //I/O pins
 #define encoderLA 3
@@ -56,12 +54,12 @@ int rlast_counter;
 int rtotal_counter;
 
 //Odometry variables
-const double dia = 20.75; // Wheel diameter in inches  
+const double dia = 2.075; // Wheel diameter in inches  
 double Dl, Dr, Dc, Ori_ch;
 const int ER = 24; // Pulses per revolution
 double Ori  = 0; // Orientation in radians
 const double dist_const = dia * 3.1415926;
-double b = 20; // Wheelbase. Need to research/test this.
+double b = 6.8; // Wheelbase in inches
 
 // Distance from start position in inches
 double posX = 0;
