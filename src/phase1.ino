@@ -1,11 +1,6 @@
 #include <Servo.h>
 
-//I/O pins
-#define encoderLA 3
-#define encoderLB 4
-#define encoderRA 12
-#define encoderRB 13
-
+// I/O pins
 #define SERVO_PIN 9
 
 #define ECHO 8
@@ -14,7 +9,10 @@
 #define IN1 5
 #define IN2 6 
 #define IN3 3 
-#define IN4 11 
+#define IN4 11
+
+#define leftIR 12
+#define rightIR 13
 
 //States
 #define stopped 14
@@ -41,29 +39,22 @@ int backingOut;
 int corner = 0;
 int corners_checked = 0;
 
-//Rotary encoder counter
-volatile int lcounter = 0;
-int laLastState;
-int lcurrent_counter;
-int llast_counter;
-int ltotal_counter;
-volatile int rcounter = 0;
-int raLastState;
-int rcurrent_counter;
-int rlast_counter;
-int rtotal_counter;
-
-//Odometry variables
-const double dia = 2.075; // Wheel diameter in inches  
-double Dl, Dr, Dc, Ori_ch;
-const int ER = 24; // Pulses per revolution
-double Ori  = 0; // Orientation in radians
-const double dist_const = dia * 3.1415926;
-double b = 6.8; // Wheelbase in inches
+//Odometry
+int irLastStateL;
+int irLastStateR;
+int leftCounter = 0;
+int rightCounter = 0;
+int lastTotalCounterL = 0;
+int lastTotalCounterR = 0;
+double inches_per_tick = 0.1; // Empirically adjust this value based on testing
 
 // Distance from start position in inches
+// X is in the forward direction from the robot's initial position/orientation
+// Y is in the right direction from the robot's initial position/orientation
 double posX = 0;
 double posY = 0;
+// Relative orientation in radians
+double orientation = 3.1415926 / 2.0; // Start facing "up" (pi/2, or 90 degrees)
 
 double temp;
 
@@ -234,45 +225,48 @@ void navigate(){
 }
 
 void countL() {
-  int laState = digitalRead(encoderLA);
-  int lbState = digitalRead(encoderLB);
+  int irStateL = digitalRead(leftIR);
 
-  if (laState != laLastState) {  // Only process on change
-    if (lbState != laState) lcounter++;
-    else lcounter--;
+  if (irStateL != irLastStateL) {  // Only process on change
+    leftCounter++;
   }
-  laLastState = laState;
+  irLastStateL = irStateL;
 }
-void countR() {
-  int raState = digitalRead(encoderRA);
-  int rbState = digitalRead(encoderRB);
 
-  if (raState != raLastState) {  // Only process on change
-    if (rbState != raState) rcounter++;
-    else rcounter--;
+void countR() {
+  int irStateR = digitalRead(rightIR);
+
+  if (irStateR != irLastStateR) {  // Only process on change
+    rightCounter++;
   }
-  raLastState = raState;
+  irLastStateR = irStateR;
 }
 
 void get_position(){
   // Determine number of ticks for this iteration
   noInterrupts();
-  ltotal_counter = lcounter;
-  rtotal_counter = rcounter;
+  int totalCounterL = leftCounter;
+  int totalCounterR = rightCounter;
   interrupts();
-  lcurrent_counter = ltotal_counter - llast_counter;
-  llast_counter = ltotal_counter;
-  rcurrent_counter = rtotal_counter - rlast_counter;
-  rlast_counter = rtotal_counter;
-  
-  Dl = dist_const * lcurrent_counter; // Change in left distance
-  Dr = dist_const * rcurrent_counter; // Change in right distance 
-  Dc = (Dl + Dr) / 2 ; // Displacement
-  Ori_ch = (Dr - Dl) / b; // Change in orientation
-  Ori = Ori + Ori_ch; // New orientation
-  posX = posX + Dc * cos(Ori); 
-  posY = posY + Dc * sin(Ori);
-}
+  int currentCounterL = totalCounterL - lastTotalCounterL;
+  int currentCounterR = totalCounterR - lastTotalCounterR;
+
+  if (state == forward){
+    double distance_traveled = (currentCounterL + currentCounterR) / 2.0 * inches_per_tick;
+    posX = posX + cos(orientation) * distance_traveled;
+    posY = posY + sin(orientation) * distance_traveled;
+  }
+  else if (state == reverse){
+    double distance_traveled = (currentCounterL + currentCounterR) / 2.0 * inches_per_tick;
+    posX = posX - cos(orientation) * distance_traveled;
+    posY = posY - sin(orientation) * distance_traveled;
+  }
+
+  // Left and right will be determined later after testing
+
+  lastTotalCounterL = totalCounterL;
+  lastTotalCounterR = totalCounterR;
+} 
 
 void setup() {
   // Set pin modes
@@ -280,10 +274,8 @@ void setup() {
   pinMode(IN2, OUTPUT);
   pinMode(IN3, OUTPUT);
   pinMode(IN4, OUTPUT);
-  pinMode(encoderLA, INPUT_PULLUP);
-  pinMode(encoderLB, INPUT_PULLUP);
-  pinMode(encoderRA, INPUT_PULLUP);
-  pinMode(encoderRB, INPUT_PULLUP);
+  pinMode(leftIR, INPUT);
+  pinMode(rightIR, INPUT)
   pinMode(TRIG, OUTPUT);
   pinMode(ECHO, INPUT);
 
@@ -302,12 +294,10 @@ void setup() {
   delay(200);
 
   // Initialize encoder interrupts
-  laLastState = digitalRead(encoderLA);
-  llast_counter = 0;
-  attachInterrupt(digitalPinToInterrupt(encoderLA), countL, CHANGE);
-  raLastState = digitalRead(encoderRA);
-  rlast_counter = 0;
-  attachInterrupt(digitalPinToInterrupt(encoderRA), countR, CHANGE);
+  irLastStateL = digitalRead(leftIR);
+  attachInterrupt(digitalPinToInterrupt(leftIR), countL, CHANGE);
+  irLastStateR = digitalRead(rightIR);
+  attachInterrupt(digitalPinToInterrupt(rightIR), countR, CHANGE);
   
   Serial.begin(9600);
 
@@ -322,9 +312,10 @@ void setup() {
 void loop() {
   //Temp sensing
   temp = analogRead(A0) / 1024.0 * 5 * 100; // temperature in degrees C
-  
-  // Calculate our position
-  get_position();
+
+  scan_range(0, 180, divisions); // This is where the most time is spent. Gathering obstacle data.
+
+  get_position(); // Calculate our current position.
 
   // Check to see if we've found the next corner
   if (!corner){
@@ -339,6 +330,5 @@ void loop() {
     }
   }
 
-  scan_range(0, 180, divisions); // This is where the most time is spent
   if (!corner) navigate(); //Hug the left wall
 }
