@@ -1,18 +1,20 @@
 #include <Servo.h>
+#include "SoftPWM.h"
 
 // I/O pins
 #define SERVO_PIN 9
 
 #define ECHO 8
 #define TRIG 7
- 
-#define IN1 5
-#define IN2 6 
-#define IN3 3 
-#define IN4 11
 
-#define leftIR 12
-#define rightIR 13
+//Currently the components are on the rover backward, hence IN2/IN1 and IN4/IN3 are switched
+#define IN1 11
+#define IN2 12 
+#define IN3 5
+#define IN4 6
+
+#define leftIR 2
+#define rightIR 3
 
 //States
 #define stopped 14
@@ -20,6 +22,8 @@
 #define left 16
 #define right 17
 #define reverse 18
+
+const double pi = 3.1415926;
 
 // Servo iterations
 const int divisions = 8;
@@ -40,13 +44,23 @@ int corner = 0;
 int corners_checked = 0;
 
 //Odometry
+unsigned long last_debounce_timeR = 0;
+unsigned long last_debounce_timeL = 0;
 int irLastStateL;
 int irLastStateR;
 int leftCounter = 0;
 int rightCounter = 0;
 int lastTotalCounterL = 0;
 int lastTotalCounterR = 0;
-double inches_per_tick = 0.1; // Empirically adjust this value based on testing
+int totalCounterL = 0;
+int totalCounterR = 0;
+int currentCounterL = 0;
+int currentCounterR = 0;
+//Empirically determined constants from testing
+double inches_per_tick = 0.29;
+double radians_per_tick = 0.0675;
+double inches_sideways_per_tick = 0.1394;
+double inches_forward_per_tick = 0.2434;
 
 // Distance from start position in inches
 // X is in the forward direction from the robot's initial position/orientation
@@ -54,7 +68,7 @@ double inches_per_tick = 0.1; // Empirically adjust this value based on testing
 double posX = 0;
 double posY = 0;
 // Relative orientation in radians
-double orientation = 3.1415926 / 2.0; // Start facing "up" (pi/2, or 90 degrees)
+double orientation = pi / 2.0; // Start facing "up" (pi/2, or 90 degrees)
 
 double temp;
 
@@ -62,51 +76,51 @@ void goForward(){
   state = forward;
   duty_cycleA = 128;
   duty_cycleB = 128;
-  analogWrite(IN1, 0);
-  analogWrite(IN2, duty_cycleA);
-  analogWrite(IN3, duty_cycleB);
-  analogWrite(IN4, 0);
+  SoftPWMSetPercent(IN1, 0);
+  SoftPWMSetPercent(IN2, duty_cycleA);
+  SoftPWMSetPercent(IN3, duty_cycleB);
+  SoftPWMSetPercent(IN4, 0);
   Serial.println("Going forward");
 }
 
 void stop(){
-  state = stop;
-  analogWrite(IN1, 0);
-  analogWrite(IN2, 0);
-  analogWrite(IN3, 0);
-  analogWrite(IN4, 0);
+  //state = stop;
+  SoftPWMSetPercent(IN1, 0);
+  SoftPWMSetPercent(IN2, 0);
+  SoftPWMSetPercent(IN3, 0);
+  SoftPWMSetPercent(IN4, 0);
 }
 
 void goReverse(){
   state = reverse;
   duty_cycleA = 128;
   duty_cycleB = 128;
-  analogWrite(IN1, duty_cycleA);
-  analogWrite(IN2, 0);
-  analogWrite(IN3, 0);
-  analogWrite(IN4, duty_cycleB);
+  SoftPWMSetPercent(IN1, duty_cycleA);
+  SoftPWMSetPercent(IN2, 0);
+  SoftPWMSetPercent(IN3, 0);
+  SoftPWMSetPercent(IN4, duty_cycleB);
   Serial.println("Reversing");
 }
 
 void turnLeft(){
   state = left;
-  duty_cycleA = 192;
+  duty_cycleA = 165;
   duty_cycleB = 128;
-  analogWrite(IN1, 0);
-  analogWrite(IN2, duty_cycleA);
-  analogWrite(IN3, 0);
-  analogWrite(IN4, duty_cycleB);
+  SoftPWMSetPercent(IN1, 0);
+  SoftPWMSetPercent(IN2, duty_cycleA);
+  SoftPWMSetPercent(IN3, 0);
+  SoftPWMSetPercent(IN4, duty_cycleB);
   Serial.println("Turning left");
 }
 
 void turnRight(){
   state = right;
   duty_cycleA = 128;
-  duty_cycleB = 192;
-  analogWrite(IN1, duty_cycleA);
-  analogWrite(IN2, 0);
-  analogWrite(IN3, duty_cycleB);
-  analogWrite(IN4, 0);
+  duty_cycleB = 165;
+  SoftPWMSetPercent(IN1, duty_cycleA);
+  SoftPWMSetPercent(IN2, 0);
+  SoftPWMSetPercent(IN3, duty_cycleB);
+  SoftPWMSetPercent(IN4, 0);
   Serial.println("Turning right");
 }
 
@@ -227,8 +241,9 @@ void navigate(){
 void countL() {
   int irStateL = digitalRead(leftIR);
 
-  if (irStateL != irLastStateL) {  // Only process on change
+  if (irStateL != irLastStateL && millis() > last_debounce_timeL + 3) {  // Only process on change
     leftCounter++;
+    last_debounce_timeL = millis();
   }
   irLastStateL = irStateL;
 }
@@ -236,8 +251,9 @@ void countL() {
 void countR() {
   int irStateR = digitalRead(rightIR);
 
-  if (irStateR != irLastStateR) {  // Only process on change
+  if (irStateR != irLastStateR && millis() > last_debounce_timeR + 3) {  // Only process on change
     rightCounter++;
+    last_debounce_timeR = millis();
   }
   irLastStateR = irStateR;
 }
@@ -245,12 +261,25 @@ void countR() {
 void get_position(){
   // Determine number of ticks for this iteration
   noInterrupts();
-  int totalCounterL = leftCounter;
-  int totalCounterR = rightCounter;
+  totalCounterL = leftCounter;
+  totalCounterR = rightCounter;
   interrupts();
-  int currentCounterL = totalCounterL - lastTotalCounterL;
-  int currentCounterR = totalCounterR - lastTotalCounterR;
+  currentCounterL = totalCounterL - lastTotalCounterL;
+  currentCounterR = totalCounterR - lastTotalCounterR;
 
+  // Adjust for bad values. Values should be a single digit positive integer.
+  if (currentCounterL > 10 || currentCounterL < 1){
+    if (state == forward || state == reverse) currentCounterL = currentCounterR;
+    if (state == left) currentCounterL = currentCounterR / 2;
+    if (state == right) currentCounterL = currentCounterR * 2;
+  }
+  if (currentCounterR > 10 || currentCounterR < 1){
+    if (state == forward || state == reverse) currentCounterR = currentCounterL;
+    if (state == left) currentCounterR = currentCounterL / 2;
+    if (state == right) currentCounterR = currentCounterL * 2;
+  }
+
+  //Calculate position based on what state we're in
   if (state == forward){
     double distance_traveled = (currentCounterL + currentCounterR) / 2.0 * inches_per_tick;
     posX = posX + cos(orientation) * distance_traveled;
@@ -261,8 +290,18 @@ void get_position(){
     posX = posX - cos(orientation) * distance_traveled;
     posY = posY - sin(orientation) * distance_traveled;
   }
-
-  // Left and right will be determined later after testing
+  else if (state == left){
+    double normalized_ticks = (currentCounterL + currentCounterR * 0.444) / 2.0;
+    posX = posX - sin(orientation) * normalized_ticks * inches_sideways_per_tick + cos(orientation) * normalized_ticks * inches_forward_per_tick;
+    posY = posY + sin(orientation) * normalized_ticks * inches_forward_per_tick - cos(orientation) * normalized_ticks * inches_sideways_per_tick;
+    orientation += normalized_ticks * radians_per_tick;
+  }
+  else if (state == right){
+    double normalized_ticks = (currentCounterL + currentCounterR * 0.444) / 2.0;
+    posX = posX + sin(orientation) * normalized_ticks * inches_sideways_per_tick - cos(orientation) * normalized_ticks * inches_forward_per_tick;
+    posY = posY + sin(orientation) * normalized_ticks * inches_forward_per_tick - cos(orientation) * normalized_ticks * inches_sideways_per_tick;
+    orientation -= normalized_ticks * radians_per_tick;
+  }
 
   lastTotalCounterL = totalCounterL;
   lastTotalCounterR = totalCounterR;
@@ -275,15 +314,16 @@ void setup() {
   pinMode(IN3, OUTPUT);
   pinMode(IN4, OUTPUT);
   pinMode(leftIR, INPUT);
-  pinMode(rightIR, INPUT)
+  pinMode(rightIR, INPUT);
   pinMode(TRIG, OUTPUT);
   pinMode(ECHO, INPUT);
 
   // Initialize motor state (motor off)
-  analogWrite(IN1, 0);
-  analogWrite(IN2, 0);
-  analogWrite(IN3, 0);
-  analogWrite(IN4, 0);
+  SoftPWMBegin();
+  SoftPWMSetPercent(IN1, 0);
+  SoftPWMSetPercent(IN2, 0);
+  SoftPWMSetPercent(IN3, 0);
+  SoftPWMSetPercent(IN4, 0);
 
   // Initialize ultrasonic state
   digitalWrite(TRIG, LOW);
@@ -295,9 +335,10 @@ void setup() {
 
   // Initialize encoder interrupts
   irLastStateL = digitalRead(leftIR);
-  attachInterrupt(digitalPinToInterrupt(leftIR), countL, CHANGE);
   irLastStateR = digitalRead(rightIR);
+  attachInterrupt(digitalPinToInterrupt(leftIR), countL, CHANGE);
   attachInterrupt(digitalPinToInterrupt(rightIR), countR, CHANGE);
+  noInterrupts();
   
   Serial.begin(9600);
 
@@ -306,11 +347,13 @@ void setup() {
   
   stop();
   delay(200);
-  goForward();
+  turnLeft();
+  interrupts();
 }
 
 void loop() {
   //Temp sensing
+  /*
   temp = analogRead(A0) / 1024.0 * 5 * 100; // temperature in degrees C
 
   scan_range(0, 180, divisions); // This is where the most time is spent. Gathering obstacle data.
@@ -330,5 +373,46 @@ void loop() {
     }
   }
 
-  if (!corner) navigate(); //Hug the left wall
+  Serial.print("Left counter: "); Serial.println(currentCounterL);
+  Serial.print("Right counter: "); Serial.println(currentCounterR);
+  Serial.print("Total left coutner: "); Serial.println(totalCounterL);
+  Serial.print("Total right counter:"); Serial.println(totalCounterR);
+  
+  Serial.print("Position: "); Serial.print(posX); Serial.print(", "); Serial.println(posY);
+  //if (!corner) navigate(); //Hug the left wall
+  */
+  goForward();
+  delay(1000);
+  get_position();
+  Serial.print("Position: "); Serial.print(posX); Serial.print(", "); Serial.println(posY);
+  Serial.print("Orientation: "); Serial.println(orientation);
+  turnLeft();
+  delay(1000);
+  get_position();
+  Serial.print("Position: "); Serial.print(posX); Serial.print(", "); Serial.println(posY);
+  Serial.print("Orientation: "); Serial.println(orientation);
+  goForward();
+  delay(1000);
+  get_position();
+  Serial.print("Position: "); Serial.print(posX); Serial.print(", "); Serial.println(posY);
+  Serial.print("Orientation: "); Serial.println(orientation);
+  /*
+  turnRight();
+  delay(1000);
+  get_position();
+  Serial.print("Position: "); Serial.print(posX); Serial.print(", "); Serial.println(posY);
+  Serial.print("Orientation: "); Serial.println(orientation);
+  goForward();
+  delay(1000);
+  get_position();
+  Serial.print("Position: "); Serial.print(posX); Serial.print(", "); Serial.println(posY);
+  Serial.print("Orientation: "); Serial.println(orientation);
+  goReverse();
+  delay(1000);
+  */
+  stop();
+  get_position();
+  Serial.print("Position: "); Serial.print(posX); Serial.print(", "); Serial.println(posY);
+  Serial.print("Orientation: "); Serial.println(orientation);
+  delay(10000);
 }
