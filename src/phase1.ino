@@ -39,9 +39,12 @@ int duty_cycleB;
 int state;
 int backingOut;
 
+
 //Navigation states
 int corner = 0;
 int corners_checked = 0;
+int checking_state = 0;
+int target_found = 0;
 
 //Odometry
 volatile unsigned long last_debounce_timeR = 0;
@@ -79,8 +82,10 @@ double temp;
 unsigned long current_time;
 unsigned long elapsed_time1 = 0;
 unsigned long elapsed_time2 = 0;
+unsigned long elapsed_time_temp = 0;
 unsigned long last_time1;
 unsigned long last_time2;
+unsigned long last_time_temp;
 int no_print;
 
 void goForward(){
@@ -181,7 +186,7 @@ double center_min;
 double right_min;
 double left_min;
 
-void navigate(){
+void getMins(){
   // Find minimum value in the center
   for (int i = 0; i <= divisions / 3; i++){
     center_array[i] = dists[i + divisions / 3 + 1];
@@ -199,9 +204,10 @@ void navigate(){
     right_array[i] = dists[i];
   }
   right_min = getMin(right_array, divisions / 3 + 1);
+}
 
-  // Logic to hug the left wall
-  if (state == forward){
+void navigate(){  // Logic to hug the left wall
+    if (state == forward){
       if (center_min >= 7 && left_min < 10 && left_min > 4 && right_min > 4){
         goForward();
       }else if (left_min >= 10 && right_min > 4){
@@ -247,6 +253,83 @@ void navigate(){
     }
     else goReverse();
   }
+}
+
+double targetX;
+double targetY;
+double target_angle;
+
+void findCorner(){
+  // State 0: Find the target
+  if (checking_state == 0){
+    // Target = (5, 5) away from the heat gun
+    if (corners_checked == 0){ // No corners checked: goal is directly forward from start point
+      targetX = 17;
+      targetY = 8*12 - 17; 
+    }
+    else if (corners_checked == 1){ // One corner checked: goal is opposite from start point
+      targetX = 8*12 - 17;
+      targetY = 8*12 - 17;
+    }
+    else if (corners_checked == 2){ // Two corners checked: goal is directly right from start point
+      targetX = 8*12 - 17;
+      targetY = 17;
+    }
+    else{
+      Serial.println("Error: all corners have been checked");
+    }
+    checking_state = 1;
+  }
+
+  // State 1: Get proper orientation
+  if (checking_state == 1){
+    target_angle = atan((targetY - posY) / (targetX - posX));
+    if (target_angle - orientation < 10.0 / 180.0 * pi && target_angle - orientation > -10.0 / 180.0 * pi){ // If we're within 10 degrees of the target angle, start going forward
+      checking_state = 2;
+    }
+    // Otherwise, turn left or right depending on which is closer
+    else if (target_angle - orientation < 0) turnRight();
+    else if (target_angle - orientation > 0) turnLeft();
+  }
+
+  // State 2: Traveling toward the goal
+  if (checking_state == 2){
+    if (posX > targetX - 2 && posX < targetX + 2 && posY > targetY - 2 && posY < targetY - 2){ // If we're at the target within +/- 2 inches
+      checking_state = 4;
+      last_time_temp = micros();
+    }
+    else if (center_min < 5){
+      goForward();
+    }
+    else checking_state = 3;
+  }
+
+  // State 3: Obstacle avoidance
+  if (checking_state == 3){
+    if(/*FILL IN: condition for getting out of obstacle avoidance state*/1) checking_state = 1;
+    else navigate();
+  }
+
+  // State 4: Checking temperature
+  if (checking_state == 4){
+    stop();
+    if (corners_checked == 2) target_found = 1;
+    else{
+      temp = analogRead(A0) / 1024.0 * 5 * 100; // temperature in degrees C
+      if (temp > 35){ // Adjust temperature threshold as neccessary
+        target_found = 1;
+      }
+      else{
+        current_time = micros();
+        elapsed_time_temp = current_time - last_time_temp;
+        if (elapsed_time_temp > 3000000){ // Stay for three seconds to allow temperature sensor to adjust
+          corners_checked++;
+          corner = 0;
+        }
+      }
+    }
+  }
+
 }
 
 void countL() {
@@ -300,18 +383,14 @@ void get_position(){
   }
   else if (state == left){
     double dori = (currentCounterL + currentCounterR) * radians_per_tick;
-    double dx = turning_radius * cos(dori + orientation)  - turning_radius * cos(orientation);
-    double dy = turning_radius * sin(dori + orientation) - turning_radius * sin(orientation);
-    posX = posX + dx;
-    posY = posY + dy;
+    posX = posX + turning_radius * cos(dori + orientation)  - turning_radius * cos(orientation);
+    posY = posY + turning_radius * sin(dori + orientation) - turning_radius * sin(orientation);;
     orientation += dori;
   }
   else if (state == right){
     double dori = -1 * (currentCounterL + currentCounterR) * radians_per_tick;
-    double dx = turning_radius * cos(dori + orientation)  - turning_radius * cos(orientation);
-    double dy = turning_radius * sin(dori + orientation) - turning_radius * sin(orientation);
-    posX = posX + dx;
-    posY = posY + dy;
+    posX = posX + turning_radius * cos(dori + orientation)  - turning_radius * cos(orientation);
+    posY = posY + turning_radius * sin(dori + orientation) - turning_radius * sin(orientation);;
     orientation += dori;
   }
   
@@ -367,10 +446,6 @@ void setup() {
 }
 
 void loop() {
-  //Temp sensing
-  
-  temp = analogRead(A0) / 1024.0 * 5 * 100; // temperature in degrees C
-
   scan_range(0, 180, divisions); // This is where the most time is spent. Gathering obstacle data.
 
   get_position(); // Calculate our current position.
@@ -388,7 +463,9 @@ void loop() {
     }
   }
 
+  getMins();
   if (!corner) navigate(); //Hug the left wall
+  else findCorner();
 
   ////////////// Navigation testing logic //////////////////////////
   /*
