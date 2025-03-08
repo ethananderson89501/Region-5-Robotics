@@ -45,6 +45,7 @@ int corner = 0;
 int corners_checked = 0;
 int checking_state = 0;
 int target_found = 0;
+int checking_counter = 0;
 
 //Odometry
 volatile unsigned long last_debounce_timeR = 0;
@@ -306,8 +307,14 @@ void findCorner(){
 
   // State 3: Obstacle avoidance
   if (checking_state == 3){
-    if(/*FILL IN: condition for getting out of obstacle avoidance state*/1) checking_state = 1;
-    else navigate();
+    if(checking_counter >= 10){ // Try to avoid obstacles for five iterations through the loop, then try again
+      checking_counter = 0;
+      checking_state = 1;
+    }
+    else{
+      checking_counter++;
+      navigate();
+    }
   }
 
   // State 4: Checking temperature
