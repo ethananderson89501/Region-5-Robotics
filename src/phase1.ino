@@ -89,6 +89,16 @@ unsigned long last_time2;
 unsigned long last_time_temp;
 int no_print;
 
+bool checkShouldExitObstacleAboidance(double angleto, double orientation){
+  head.write(angleto - orientation);
+  delay(30);
+  if watch() < 5{
+    return true;
+  }else{
+    return false;
+  }
+}
+
 void goForward(){
   state = forward;
   duty_cycleA = 128;
