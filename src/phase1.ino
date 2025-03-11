@@ -1,5 +1,6 @@
 #include <Servo.h>
 #include <PinChangeInterrupt.h>
+#include <NewPing.h>
 
 // I/O pins
 #define SERVO_PIN 9
@@ -7,9 +8,8 @@
 #define ECHO 8
 #define TRIG 7
 
-//Currently the components are on the rover backward, hence IN2/IN1 and IN4/IN3 are switched
-#define IN1 11
-#define IN2 3 
+#define IN1 3
+#define IN2 11 
 #define IN3 5
 #define IN4 6
 
@@ -39,6 +39,9 @@ int duty_cycleB;
 int state;
 int backingOut;
 
+// Ultrasonic
+int MAX_DISTANCE = 250;
+NewPing sonar(TRIG, ECHO, MAX_DISTANCE);
 
 //Navigation states
 int corner = 0;
@@ -61,13 +64,9 @@ int totalCounterR = 0;
 int currentCounterL = 0;
 int currentCounterR = 0;
 //Empirically determined constants from testing
-double inches_per_tick = 0.29;
-//double radians_per_tick = 0.0205;
-//double inches_forward_per_tick = 0.0440;
-//double inches_sideways_per_tick = 0.0912;
-double radians_per_tick = 0.0199;
-//double inches_sideways_per_radian = 4.3743;
-//double inches_forward_per_radian = 2.1155;
+//double inches_per_tick = 0.29; // Old for clean treads
+double inches_per_tick = .346; // Measured from dirty treads
+double radians_per_tick = 0.0216; // Measured from dirty treads
 double turning_radius = 3;
 
 // Distance from start position in inches
@@ -88,6 +87,8 @@ unsigned long last_time1;
 unsigned long last_time2;
 unsigned long last_time_temp;
 int no_print;
+
+int nav_state = 0;
 
 bool checkShouldExitObstacleAboidance(double angleto, double orientation){
   head.write(angleto - orientation);
@@ -152,16 +153,8 @@ void turnRight(){
 }
 
 double watch(){
-  digitalWrite(TRIG,LOW);
-  delayMicroseconds(5);                                                                            
-  digitalWrite(TRIG,HIGH);
-  delayMicroseconds(10); // give or take 7 feet
-  digitalWrite(TRIG,LOW);
-  long echo_time=pulseIn(ECHO,HIGH);
-  if (echo_time <= 0) {
-    return -1.0; // Return a special value to indicate no echo detected
-  }
-  double echo_distance=echo_time / 148.0; //how far away is the object in inches
+  double echo_distance = sonar.ping_in();
+  Serial.print("Distance: "); Serial.println(echo_distance);
   return echo_distance;
 }
 
@@ -172,7 +165,8 @@ void scan_range(double theta_0, double theta_1, int divisions){
     double angle = theta_0 + i * delta; // 2 * theta_1 since divisions is 2 * on second pass
     if (direction == 1) head.write(angle);
     else head.write(theta_1 - angle);
-    delay(30);
+    last_time1 = micros();
+    while (micros() < last_time1 + 30000){} // delay 
     double dist = watch();
     if (dist < 0) dist = 0; // Filters out invalid values
     if (direction == 1) dists[i] = dist;
@@ -215,11 +209,18 @@ void getMins(){
     right_array[i] = dists[i];
   }
   right_min = getMin(right_array, divisions / 3 + 1);
+  Serial.print("Distances: ");
+  for (int i = 0; i < 9; i++){
+    Serial.print(dists[i]);
+    Serial.print(" ");
+  }
+  Serial.println();
+  Serial.print("Mins: "); Serial.print(left_min); Serial.print(" "); Serial.print(center_min); Serial.print(" "); Serial.println(right_min);
 }
 
 void navigate(){  // Logic to hug the left wall
     if (state == forward){
-      if (center_min >= 7 && left_min < 10 && left_min > 4 && right_min > 4){
+      if (center_min >= 10 && left_min < 30 && left_min > 4 && right_min > 4){
         goForward();
       }else if (left_min >= 10 && right_min > 4){
         turnLeft();
@@ -231,7 +232,7 @@ void navigate(){  // Logic to hug the left wall
         goForward();
       }
       
-      else if (right_min >= 7 & left_min > 4){
+      else if (right_min >= 8 & left_min > 4){
         turnRight();
       }
       else{
@@ -251,10 +252,15 @@ void navigate(){  // Logic to hug the left wall
     }
   }
   else if (state == left){
-    if (left_min >= 10){
+    if (left_min >= 30){
       turnLeft();
     }
-    else{ goForward();}
+    else if (center_min > 7) goForward();
+    else if (right_min > 7) turnRight();
+    else{
+      backingOut = 1;
+      goReverse();
+    }
   }
   
   else if (state == reverse){
@@ -271,6 +277,8 @@ double targetY;
 double target_angle;
 
 void findCorner(){
+  Serial.print("State: "); Serial.println(checking_state);
+
   // State 0: Find the target
   if (checking_state == 0){
     // Target = (5, 5) away from the heat gun
@@ -289,12 +297,15 @@ void findCorner(){
     else{
       Serial.println("Error: all corners have been checked");
     }
+    target_angle = atan((targetY - posY) / (targetX - posX));
+
     checking_state = 1;
   }
 
   // State 1: Get proper orientation
   if (checking_state == 1){
-    target_angle = atan((targetY - posY) / (targetX - posX));
+    Serial.print("Target Angle: "); Serial.println(target_angle);
+    Serial.print("Orientation: "); Serial.println(orientation);
     if (target_angle - orientation < 10.0 / 180.0 * pi && target_angle - orientation > -10.0 / 180.0 * pi){ // If we're within 10 degrees of the target angle, start going forward
       checking_state = 2;
     }
@@ -305,14 +316,14 @@ void findCorner(){
 
   // State 2: Traveling toward the goal
   if (checking_state == 2){
-    if (posX > targetX - 2 && posX < targetX + 2 && posY > targetY - 2 && posY < targetY - 2){ // If we're at the target within +/- 2 inches
+    if (posX > targetX - 2 && posX < targetX + 2 && posY > targetY - 2 && posY < targetY + 2){ // If we're at the target within +/- 2 inches
       checking_state = 4;
       last_time_temp = micros();
     }
     else if (center_min < 5){
       goForward();
     }
-    else checking_state = 3;
+    else checking_state = 4;
   }
 
   // State 3: Obstacle avoidance
@@ -374,19 +385,6 @@ void get_position(){
   currentCounterL = totalCounterL - lastTotalCounterL;
   currentCounterR = totalCounterR - lastTotalCounterR;
 
-  // Adjust for bad values. Values should be a single digit positive integer.
-  /*
-  if (currentCounterL > 10){
-    if (state == forward || state == reverse) currentCounterL = currentCounterR;
-    if (state == left) currentCounterL = currentCounterR / 2;
-    if (state == right) currentCounterL = currentCounterR * 2;
-  }
-  if (currentCounterR > 10){
-    if (state == forward || state == reverse) currentCounterR = currentCounterL;
-    if (state == left) currentCounterR = currentCounterL / 2;
-    if (state == right) currentCounterR = currentCounterL * 2;
-  }
-*/
   //Calculate position based on what state we're in
   if (state == forward){
     double distance_traveled = (currentCounterL + currentCounterR) / 2.0 * inches_per_tick;
@@ -415,6 +413,8 @@ void get_position(){
 
   lastTotalCounterL = totalCounterL;
   lastTotalCounterR = totalCounterR;
+
+  Serial.print("Position: "); Serial.print(posX); Serial.print(", "); Serial.println(posY);
 } 
 
 void setup() {
@@ -463,6 +463,7 @@ void setup() {
 }
 
 void loop() {
+  
   scan_range(0, 180, divisions); // This is where the most time is spent. Gathering obstacle data.
 
   get_position(); // Calculate our current position.
@@ -486,6 +487,7 @@ void loop() {
 
   ////////////// Navigation testing logic //////////////////////////
   /*
+  get_position();
   current_time = micros();
   elapsed_time1 = current_time - last_time1;
   elapsed_time2 = current_time - last_time2;
@@ -513,12 +515,24 @@ void loop() {
   }
   
 
-  if (elapsed_time2 > 1000000){
-    if (state == forward) turnLeft();
-    else if (state == left) goReverse();
-    else if (state == reverse) turnRight();
-    else if (state == right) goForward();
-    last_time2 = current_time;
+  if (elapsed_time2 > 10000){
+    if (nav_state == 0){
+      goForward();
+      if (posY > 6*12) nav_state = 3;
+    }
+    if (nav_state == 1){
+      turnRight();
+      if (orientation < 0) nav_state = 2;
+    }
+    if (nav_state == 2){
+      goForward();
+      if (posX > 6*12){
+        nav_state = 3;
+      }
+    }
+    if (nav_state == 3){
+      findCorner();
+    }
   }
   */
 }
