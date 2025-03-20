@@ -54,6 +54,9 @@ int stuck_counter = 0;
 int nav_stuck_counter = 0;
 int finished = 0;
 int waiting = 0;
+double targetX;
+double targetY;
+double target_angle;
 
 //Odometry
 volatile unsigned long last_debounce_timeR = 0;
@@ -219,6 +222,36 @@ void getMins(){
   Serial.print("Mins: "); Serial.print(left_min); Serial.print(" "); Serial.print(center_min); Serial.print(" "); Serial.println(right_min);
 }
 
+void findWall(){
+  Serial.println("Finding wall");
+
+  if (corners_checked == 0) target_angle = pi/2;
+  if (corners_checked == 1) target_angle = 0;
+  if (corners_checked == 2) target_angle = -pi/2;
+  Serial.print("Target angle: "); Serial.println(target_angle);
+
+  // State 1: target angle
+  if (finding_state == 1){
+    Serial.print("Orientation: "); Serial.println(orientation);
+    if (target_angle - orientation < 10.0 / 180.0 * pi && target_angle - orientation > -10.0 / 180.0 * pi){ // If we're within 10 degrees of the target angle, start going forward
+      finding_state = 2;
+    }
+    // Otherwise, turn left or right depending on which is closer
+    else if (target_angle - orientation < 0) turnRight();
+    else if (target_angle - orientation > 0) turnLeft();
+  }
+
+  // State 2: Moving forward
+  if (finding_state == 2){
+    goForward();
+    if (center_min < 12 || left_min < 12 || right_min < 12){
+      finding_state = 0;
+      Serial.println("Returning to normal");
+    }
+  }
+
+}
+
 void navigate(){  // Logic to hug the left wall
   if (state == stop){
     findWall();
@@ -270,6 +303,7 @@ void navigate(){  // Logic to hug the left wall
     else{
       goForward();// goReverse();
       nav_stuck_counter = 0;
+    }
   }
   
   else if (state == reverse){
@@ -280,10 +314,6 @@ void navigate(){  // Logic to hug the left wall
     else goReverse();
   }
 }
-
-double targetX;
-double targetY;
-double target_angle;
 
 void findCorner(){
   // State 0: Find the target
@@ -399,36 +429,6 @@ void findCorner(){
     last_time_temp = micros();
   }
   Serial.print("Stuck counter: "); Serial.println(stuck_counter);
-
-}
-
-void findWall(){
-  Serial.println("Finding wall");
-
-  if (corners_checked == 0) target_angle = pi/2;
-  if (corners_checked == 1) target_angle = 0;
-  if (corners_checked == 2) target_angle = -pi/2;
-  Serial.print("Target angle: "); Serial.println(target_angle);
-
-  // State 1: target angle
-  if (finding_state == 1){
-    Serial.print("Orientation: "); Serial.println(orientation);
-    if (target_angle - orientation < 10.0 / 180.0 * pi && target_angle - orientation > -10.0 / 180.0 * pi){ // If we're within 10 degrees of the target angle, start going forward
-      finding_state = 2;
-    }
-    // Otherwise, turn left or right depending on which is closer
-    else if (target_angle - orientation < 0) turnRight();
-    else if (target_angle - orientation > 0) turnLeft();
-  }
-
-  // State 2: Moving forward
-  if (finding_state == 2){
-    goForward();
-    if (center_min < 12 || left_min < 12 || right_min < 12){
-      finding_state = 0;
-      Serial.println("Returning to normal");
-    }
-  }
 
 }
 
