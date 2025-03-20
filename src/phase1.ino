@@ -51,7 +51,9 @@ int target_found = 0;
 int checking_counter = 0;
 int finding_state = 0;
 int stuck_counter = 0;
+int nav_stuck_counter = 0;
 int finished = 0;
+int waiting = 0;
 
 //Odometry
 volatile unsigned long last_debounce_timeR = 0;
@@ -67,19 +69,8 @@ int totalCounterR = 0;
 int currentCounterL = 0;
 int currentCounterR = 0;
 //Empirically determined constants from testing
-//double inches_per_tick = 0.29; // Old for clean treads
-//double radians_per_tick = 0.0199; //Clean treads
-//double inches_per_tick = .346; // Measured from dirty treads
-//double radians_per_tick = 0.0216; // Measured from dirty treads
-//double turning_radius = 3;
-//double inches_per_tick = 0.307; //Tested 3/15
-//double radians_per_tick = 0.0209; // Tested 3/15
-//double inches_per_tick = 0.0700; // 3/16 both sensors - right reading more
-//double radians_per_tick = 0.00786; // 3/16 both sensors - right reading more
-//double inches_per_tick = 0.129; // 3/16 right sensor only
-//double radians_per_tick = .0116; // 3/16 right sensor only
-double inches_per_tick = 0.139; // 3/16 both sensors reading the same
-double radians_per_tick = 0.0188; // 3/16 both sensors reading the same
+double inches_per_tick = 0.141; // 3/20
+double radians_per_tick = 0.0184; // 3/20
 
 // Distance from start position in inches
 // X is in the forward direction from the robot's initial position/orientation
@@ -224,13 +215,7 @@ void getMins(){
     right_array[i] = dists[i];
   }
   right_min = getMin(right_array, divisions / 3 + 1);
-
-  Serial.print("Distances: ");
-  for (int i = 0; i < 9; i++){
-    Serial.print(dists[i]);
-    Serial.print(" ");
-  }
-  Serial.println();
+  
   Serial.print("Mins: "); Serial.print(left_min); Serial.print(" "); Serial.print(center_min); Serial.print(" "); Serial.println(right_min);
 }
 
@@ -240,9 +225,9 @@ void navigate(){  // Logic to hug the left wall
     finding_state = 1;
   }
   if (state == forward){
-    if (center_min >= 9 && left_min < 12 && left_min > 6 && right_min > 6){
+    if (center_min >= 11 && left_min < 14 && left_min > 8 && right_min > 8){
       goForward();
-    }else if (left_min >= 12 && right_min > 6){
+    }else if (left_min >= 14 && right_min > 8){
       turnLeft();
     }
     /*
@@ -252,7 +237,7 @@ void navigate(){  // Logic to hug the left wall
       goForward();
     }
     */
-    else if (right_min >= 9 & left_min > 6){
+    else if (right_min >= 11 && left_min > 8){
       turnRight();
     }
     else{
@@ -262,7 +247,7 @@ void navigate(){  // Logic to hug the left wall
     }
   }
   else if (state == right){
-    if (center_min < 9){
+    if (center_min < 11){
       turnRight();
     }
     else if (backingOut && right_min >= 14 && center_min < 12) turnRight();
@@ -272,16 +257,23 @@ void navigate(){  // Logic to hug the left wall
     }
   }
   else if (state == left){
-    if (left_min >= 12){
+    if (nav_stuck_counter > 5){
+      findWall();
+      finding_state = 1;
+    }
+    if (left_min >= 14){
       turnLeft();
+      nav_stuck_counter++;
     }
     //else if (left_min > 4) { goForward();}
     //else if (right_min >= 7) turnRight();
-    else goForward();// goReverse();
+    else{
+      goForward();// goReverse();
+      nav_stuck_counter = 0;
   }
   
   else if (state == reverse){
-    if (right_min >= 10){
+    if (right_min >= 12){
       turnRight();
       backingOut = 1;
     }
@@ -298,30 +290,34 @@ void findCorner(){
   if (checking_state == 0){
     // Target = (5, 5) away from the heat gun
     if (corners_checked == 0){ // No corners checked: goal is directly forward from start point
-      targetX = 8;
-      targetY = 6*12; 
+      targetX = 8 + 4;
+      targetY = 6*12 - 4; 
     }
     else if (corners_checked == 1){ // One corner checked: goal is opposite from start point
-      targetX = 8 + 5*12;
-      targetY = 6*12;
+      targetX = 8 + 5*12 - 4;
+      targetY = 6*12 - 4;
     }
     else if (corners_checked == 2){ // Two corners checked: goal is directly right from start point
-      targetX = 8 + 5*12;
-      targetY = 1*12;
+      targetX = 8 + 5*12 - 4;
+      targetY = 1*12 + 4;
     }
     else{
       Serial.println("Error: all corners have been checked");
     }
     checking_state = 1;
+    stuck_counter = 0;
   }
 
-  Serial.print("State: "); Serial.println(checking_state);
   target_angle = atan((targetY - posY) / (targetX - posX));
-  if (targetX - posX < 0) target_angle = target_angle * -1; // Flip sign if we're in quadrants 2 or 3
+  if (targetX - posX < 0){
+    if (target_angle < 0) target_angle = -pi/2.0 + target_angle;
+    else target_angle = pi/2.0 + target_angle; // Flip sign if we're in quadrants 2 or 3
+  }
   Serial.print("Target Angle: "); Serial.println(target_angle);
 
   // State 1: Get proper orientation
   if (checking_state == 1){
+    Serial.println("Commencing state 1");
     Serial.print("Orientation: "); Serial.println(orientation);
     if (target_angle - orientation < 10.0 / 180.0 * pi && target_angle - orientation > -10.0 / 180.0 * pi){ // If we're within 10 degrees of the target angle, start going forward
       checking_state = 2;
@@ -334,12 +330,13 @@ void findCorner(){
 
   // State 2: Traveling toward the goal
   if (checking_state == 2){
-    if (posX > targetX - 3 && posX < targetX + 3 && posY > targetY - 3 && posY < targetY + 3){ // If we're at the target within +/- 2 inches
+    Serial.println("Commencing state 2");
+    if (posX > targetX - 1 && posX < targetX + 1 && posY > targetY - 1 && posY < targetY + 1){ // If we're at the target within +/- 2 inches
       checking_state = 4;
       stuck_counter = 0;
       last_time_temp = micros();
     }
-    else if (abs(target_angle - orientation) > pi/2) checking_state = 1;
+    else if (abs(target_angle - orientation) > pi/2) goReverse();
     else if (center_min > 7){
       goForward();
     }
@@ -353,6 +350,7 @@ void findCorner(){
   // State 3: Obstacle avoidance
   
   if (checking_state == 3){
+    Serial.println("Commencing state 3");
     if (posX > targetX - 5 && posX < targetX + 5 && posY > targetY - 5 && posY < targetY + 5){ // If we're at the target within +/- 2 inches
       checking_state = 4;
       stuck_counter = 0;
@@ -371,32 +369,36 @@ void findCorner(){
 
   // State 4: Checking temperature
   if (checking_state == 4){
+    Serial.println("Commencing state 4");
     stop();
     Serial.print("Last time temp: "); Serial.println(last_time_temp);
     if (corners_checked == 2) target_found = 1;
     else{
       temp = analogRead(A0) / 1024.0 * 5 * 100; // temperature in degrees C
       Serial.print("Temp: "); Serial.println(temp);
-      if (temp > 35){ // Adjust temperature threshold as neccessary
+      if (temp > 25){ // Adjust temperature threshold as neccessary
         target_found = 1;
       }
       else{
         current_time = micros();
         elapsed_time_temp = current_time - last_time_temp;
-        if (elapsed_time_temp > 3000000){ // Stay for three seconds to allow temperature sensor to adjust
+        if (elapsed_time_temp > 5000000){ // Stay for five seconds to allow temperature sensor to adjust
           corners_checked++;
           corner = 0;
           checking_state = 0;
         }
       }
     }
-
-    stuck_counter++;
-    if (stuck_counter > 10){ // Adjust this value while testing
-      stuck_counter = 0;
-      checking_state = 4;
-    }
   }
+
+  stuck_counter++;
+  if (stuck_counter > 10){ // Adjust this value while testing
+    stuck_counter = 0;
+    checking_state = 4;
+    Serial.println("I'm stuck!");
+    last_time_temp = micros();
+  }
+  Serial.print("Stuck counter: "); Serial.println(stuck_counter);
 
 }
 
@@ -533,29 +535,38 @@ void setup() {
 }
 
 void loop() {
+  current_time = micros();
+  elapsed_time1 = current_time - last_time1;
+
   if (!target_found){
     scan_range(0, 180, divisions); // This is where the most time is spent. Gathering obstacle data.
 
     get_position(); // Calculate our current position.
 
     temp = analogRead(A0) / 1024.0 * 5 * 100; // temperature in degrees C
-    if (temp > 35){
+    if (temp > 30 && waiting == 0){
       stop();
-      target_found = 1;
       Serial.print("Temp: "); Serial.println(temp);
+      last_time1 = current_time;
+      elapsed_time1 = 0;
+      waiting = 1;
+    }
+    else if (state == stop && elapsed_time1 > 5000000){
+      target_found = 1;
+      waiting = 0;
     }
 
     else{
       // Check to see if we've found the next corner
       if (!corner){
         if (corners_checked == 0){ // Target: 1ft, 7ft
-          if (posY > 5*12) corner = 1; //If we've gone forward 6 ft, find the corner
+          if (posY > 4.5*12) corner = 1; //If we've gone forward 6 ft, find the corner
         }
         if (corners_checked == 1){ //Target: 7ft, 7ft
-          if (posX > 5*12) corner = 1; //If we've traveled to the first corner, and then right 6 ft, find the corner
+          if (posX > 4.5*12) corner = 1; //If we've traveled to the first corner, and then right 6 ft, find the corner
         }
         if (corners_checked == 2){ //Target: 7ft, 1ft
-          if (posY < 2*12) corner = 1; //If we're within 1 ft of our original y position, find the corner
+          if (posY < 2.5*12) corner = 1; //If we're within 1 ft of our original y position, find the corner
         }
       }
       getMins();
@@ -573,6 +584,7 @@ void loop() {
   else if (!finished){
     scan_range(0, 180, divisions); // This is where the most time is spent. Gathering obstacle data.
     get_position(); // Calculate our current position.
+    getMins();
     navigate();
     if (posX < 2*12 && posY < 2*12){ // Might adjust this later. Front wheel needs to be within a 1.5ft radius of the starting region
       stop();
