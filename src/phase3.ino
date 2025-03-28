@@ -4,6 +4,7 @@
 
 // I/O pins
 #define SERVO_PIN 9
+#define SERVO_PIN2 10
 
 #define ECHO 8
 #define TRIG 7
@@ -32,6 +33,7 @@ const int divisions = 8;
 // Servo direction
 int direction;
 Servo head;
+Servo spool;
 
 //Motor duty cycles
 int duty_cycleA;
@@ -75,8 +77,8 @@ int totalCounterR = 0;
 int currentCounterL = 0;
 int currentCounterR = 0;
 //Empirically determined constants from testing
-double inches_per_tick = 0.141; // 3/20
-double radians_per_tick = 0.0184; // 3/20
+double inches_per_tick = 0.148; // 3/27
+double radians_per_tick = 0.0201; // 3/27
 
 // Distance from start position in inches
 // X is in the forward direction from the robot's initial position/orientation
@@ -268,9 +270,9 @@ void navigate(){  // Logic to hug the left wall
     finding_state = 1;
   }
   if (state == forward){
-    if (center_min >= 11 && left_min < 14 && left_min > 8 && right_min > 8){
+    if (center_min >= 10 && left_min < 13 && left_min > 7 && right_min > 7){
       goForward();
-    }else if (left_min >= 14 && right_min > 8){
+    }else if (left_min >= 13 && right_min > 7){
       turnLeft();
     }
     /*
@@ -280,7 +282,7 @@ void navigate(){  // Logic to hug the left wall
       goForward();
     }
     */
-    else if (right_min >= 11 && left_min > 8){
+    else if (right_min >= 10 && left_min > 7){
       turnRight();
     }
     else{
@@ -290,10 +292,10 @@ void navigate(){  // Logic to hug the left wall
     }
   }
   else if (state == right){
-    if (center_min < 11){
+    if (center_min < 10){
       turnRight();
     }
-    else if (backingOut && right_min >= 14 && center_min < 12) turnRight();
+    else if (backingOut && right_min >= 13 && center_min < 11) turnRight();
     else {
       goForward();
       backingOut = 0;
@@ -304,7 +306,7 @@ void navigate(){  // Logic to hug the left wall
       findWall();
       finding_state = 1;
     }
-    if (left_min >= 14){
+    if (left_min >= 13){
       turnLeft();
       nav_stuck_counter++;
     }
@@ -317,7 +319,7 @@ void navigate(){  // Logic to hug the left wall
   }
   
   else if (state == reverse){
-    if (right_min >= 12){
+    if (right_min >= 11){
       turnRight();
       backingOut = 1;
     }
@@ -409,6 +411,7 @@ void findCorner(){
   if (checking_state == 4){
     if (micros() > last_time_temp + 5000000){
       target_found = 1;
+      spool.write(180);
       Serial.println("Going back to start");
     }
     stuck_counter = 0;
@@ -471,6 +474,7 @@ void get_position(){
   }
   
   if (orientation > pi) orientation -= 2*pi;
+  if (orientation < -1*pi) orientation += 2*pi;
 
   lastTotalCounterL = totalCounterL;
   lastTotalCounterR = totalCounterR;
@@ -502,6 +506,8 @@ void setup() {
   head.attach(SERVO_PIN);
   head.write(180); //Start in left position
   delay(200);
+  spool.attach(SERVO_PIN2);
+  spool.write(110);
 
   // Initialize encoder interrupts
   irLastStateL = digitalRead(leftIR);
@@ -531,24 +537,11 @@ void loop() {
     if (latching_state == 0){ // Travleing toward the latch
       scan_range(0, 180, divisions);
       getMins();
+      navigate();
       if (posY > 3*12){
         latching_state = 2;
       }
-      else if (center_min < 7){
-        latching_state = 1;
-      }
-      else goForward();
-    }
-    if (latching_state == 1){ // Navigating around an obstacle
-      scan_range(0, 180, divisions);
-      navigate();
-      if (checking_counter == 0) checking_counter = 1;
-      else if (orientation > 85.0 / 180.0 * pi && orientation < 95.0 / 180.0 * pi){
-        latching_state = 0;
-        checking_counter = 0;
-        goForward();
-      }
-    }
+    } 
     if (latching_state == 2){ // Getting correct x position
       if (posX < 8){
         if (orientation > 2.0 / 180.0 * pi) turnRight();
@@ -565,9 +558,17 @@ void loop() {
       else if (pi/2.0 - orientation > 2.0 / 180.0 * pi) turnLeft();
       else latching_state = 4;
     }
-    if (latching_state == 4){ // Reverse
+    if (latching_state == 4){ // go forward
       if (posY > 4*12 + 3){
         posY -= 3; // Account for slipping from the ground while driving the carabiner into the latch
+        latching_state = 5;
+      }
+      else{
+        goForward();
+      }
+    }
+    if (latching_state == 5){
+      if (posY < 3*12){
         latched = 1;
       }
       else{
