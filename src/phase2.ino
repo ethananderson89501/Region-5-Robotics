@@ -23,7 +23,7 @@
 #define right 17
 #define reverse 18
 
-int target_corner = 1; // Select this value based on round 1
+int target_corner = 3; // Select this value based on round 1
 
 const double pi = 3.1415926;
 
@@ -73,8 +73,8 @@ int totalCounterR = 0;
 int currentCounterL = 0;
 int currentCounterR = 0;
 //Empirically determined constants from testing
-double inches_per_tick = 0.141; // 3/20
-double radians_per_tick = 0.0184; // 3/20
+double inches_per_tick = 0.148; // 3/27
+double radians_per_tick = 0.0201; // 3/27
 
 // Distance from start position in inches
 // X is in the forward direction from the robot's initial position/orientation
@@ -265,9 +265,9 @@ void navigate(){  // Logic to hug the left wall
     finding_state = 1;
   }
   if (state == forward){
-    if (center_min >= 11 && left_min < 14 && left_min > 8 && right_min > 8){
+    if (center_min >= 10 && left_min < 13 && left_min > 7 && right_min > 7){
       goForward();
-    }else if (left_min >= 14 && right_min > 8){
+    }else if (left_min >= 13 && right_min > 7){
       turnLeft();
     }
     /*
@@ -277,7 +277,7 @@ void navigate(){  // Logic to hug the left wall
       goForward();
     }
     */
-    else if (right_min >= 11 && left_min > 8){
+    else if (right_min >= 10 && left_min > 7){
       turnRight();
     }
     else{
@@ -287,10 +287,10 @@ void navigate(){  // Logic to hug the left wall
     }
   }
   else if (state == right){
-    if (center_min < 11){
+    if (center_min < 10){
       turnRight();
     }
-    else if (backingOut && right_min >= 14 && center_min < 12) turnRight();
+    else if (backingOut && right_min >= 13 && center_min < 11) turnRight();
     else {
       goForward();
       backingOut = 0;
@@ -301,7 +301,7 @@ void navigate(){  // Logic to hug the left wall
       findWall();
       finding_state = 1;
     }
-    if (left_min >= 14){
+    if (left_min >= 13){
       turnLeft();
       nav_stuck_counter++;
     }
@@ -314,7 +314,7 @@ void navigate(){  // Logic to hug the left wall
   }
   
   else if (state == reverse){
-    if (right_min >= 12){
+    if (right_min >= 11){
       turnRight();
       backingOut = 1;
     }
@@ -404,6 +404,7 @@ void findCorner(){
   }
 
   if (checking_state == 4){
+    stop();
     if (micros() > last_time_temp + 5000000){
       target_found = 1;
       Serial.println("Going back to start");
@@ -468,6 +469,7 @@ void get_position(){
   }
   
   if (orientation > pi) orientation -= 2*pi;
+  if (orientation < -1*pi) orientation += 2*pi
 
   lastTotalCounterL = totalCounterL;
   lastTotalCounterR = totalCounterR;
